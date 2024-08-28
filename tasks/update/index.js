@@ -1,0 +1,1 @@
+require('./updateAstherusVault.js');

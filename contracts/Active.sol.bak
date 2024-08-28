@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/extensions/AccessControlEnumerable.sol";
+
+interface IRouter {
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint amountADesired,
+        uint amountBDesired,
+        uint amountAMin,
+        uint amountBMin,
+        address to,
+        uint deadline
+    ) external returns (uint amountA, uint amountB, uint liquidity);
+}
+
+contract Active is AccessControlEnumerable {
+    using SafeERC20 for IERC20;
+
+    uint public SEASON_NUM;
+    uint public SEASON_INTERVAL;
+    uint public START_TIME;
+    uint public SEASON_SETTLE_TIME;
+    uint public OWNER_WITHDRAW_TIME;
+
+    IERC20 public VOTE_TOKEN;
+    address public ROUTER;
+
+    enum ActiveState {
+        NOT_BEGIN,
+        ON_GOING,
+        ALREADY_FINISH
+    }
+
+    struct TokenInfo {
+        uint season;
+        uint votedAmount;
+        uint voteUserNum;
+        uint createTime;
+        uint updateTime;
+    }
+
+    constructor() {
+    }
+
+    mapping(address => TokenInfo) public tokens;
+    mapping(uint => address) public bestToken;
+    mapping(uint => mapping(address => mapping(address => uint))) voteHistory;
+    mapping(uint => mapping(address => uint)) voteAmount;
+    mapping(uint => address) settled;
+    address receiver;
+
+    function getActiveState() external view returns (ActiveState state, uint season) {
+        if (block.timestamp < START_TIME) {
+            return (ActiveState.NOT_BEGIN, 0);
+        } else if (block.timestamp > START_TIME + SEASON_INTERVAL * SEASON_NUM) {
+            return (ActiveState.ALREADY_FINISH, 0);
+        } else {
+            season = (block.timestamp - START_TIME) / SEASON_INTERVAL;
+            return (ActiveState.ON_GOING, season);
+        }
+    }
+
+    function addToken(address tokenAddress) external {
+        uint season = (block.timestamp - START_TIME) / SEASON_INTERVAL;
+        TokenInfo storage tokenInfo = tokens[tokenAddress];
+        require(tokenInfo.createTime == 0, "already add");
+        tokenInfo.season = season;
+        tokenInfo.votedAmount = 0;
+        tokenInfo.voteUserNum = 0;
+        tokenInfo.createTime = block.timestamp;
+        tokenInfo.updateTime = block.timestamp;
+        if (bestToken[season] == address(0)) {
+            bestToken[season] = tokenAddress;
+        }
+    }
+
+    function vote(address tokenAddress, uint amount) external {
+        VOTE_TOKEN.safeTransferFrom(msg.sender, address(this), amount);         
+        uint season = (block.timestamp - START_TIME) / SEASON_INTERVAL;
+        TokenInfo storage tokenInfo = tokens[tokenAddress];
+        require(tokenInfo.createTime > 0, "token not exist");
+        tokenInfo.votedAmount += amount;
+        if (voteHistory[season][msg.sender][tokenAddress] == 0) {
+            tokenInfo.voteUserNum += 1;
+        }
+        voteHistory[season][msg.sender][tokenAddress] = voteHistory[season][msg.sender][tokenAddress] + amount;
+        voteAmount[season][msg.sender] += amount; 
+        if (bestToken[season] != tokenAddress) {
+            TokenInfo memory bestTokenInfo = tokens[bestToken[season]];
+            if (bestTokenInfo.votedAmount < tokenInfo.votedAmount) {
+                bestToken[season] = tokenAddress;
+            } else if (bestTokenInfo.votedAmount == tokenInfo.votedAmount && bestTokenInfo.createTime < tokenInfo.createTime) {
+                bestToken[season] = tokenAddress;
+            }
+        }
+        tokenInfo.updateTime = block.timestamp;
+    }
+
+    function getWithdrawAmount(address user) external view returns (uint) {
+        uint season = (block.timestamp - START_TIME) / SEASON_INTERVAL;
+        if (block.timestamp < START_TIME) {
+            season = 0;
+        } else if (block.timestamp > START_TIME + SEASON_INTERVAL * SEASON_NUM) {
+            season = SEASON_NUM - 1;
+        } else {
+            season = season > 0 ? season - 1 : season;
+        }
+        uint totalAmount = 0;
+        for (uint i = 0; i < season; i ++) {
+            totalAmount += voteAmount[season][user];
+        }
+        return totalAmount;
+    }
+
+    function withdraw() external {
+        uint season = (block.timestamp - START_TIME) / SEASON_INTERVAL;
+        if (block.timestamp < START_TIME) {
+            season = 0;
+        } else if (block.timestamp > START_TIME + SEASON_INTERVAL * SEASON_NUM) {
+            season = SEASON_NUM = 1;
+        } else {
+            season = season > 0 ? season - 1 : season;
+        }
+        uint totalAmount = 0;
+        for (uint i = 0; i < season; i ++) {
+            totalAmount += voteAmount[season][msg.sender];
+            voteAmount[season][msg.sender] = 0;
+        }
+        if (totalAmount > 0) {
+            VOTE_TOKEN.safeTransfer(msg.sender, totalAmount);
+        }
+    }
+
+    function settleSeason(uint season) external {
+        uint seasonBeginTime = START_TIME + SEASON_INTERVAL * season;
+        require(block.timestamp >= seasonBeginTime + SEASON_INTERVAL - SEASON_SETTLE_TIME, "illegal time");
+        require(settled[season] != address(0), "already settled");
+        address bestTokenAddress = bestToken[season];
+        if (bestTokenAddress != address(0)) {
+            IERC20(bestTokenAddress).approve(ROUTER, 10000 * 1e18);
+            VOTE_TOKEN.approve(ROUTER, 10000 * 1e18); 
+            (,,uint liquidity) = IRouter(ROUTER).addLiquidity(
+                bestTokenAddress,
+                address(VOTE_TOKEN),
+                10000 * 1e18,
+                10000 * 1e18,
+                0,
+                0,
+                address(this),
+                block.timestamp
+            );
+            settled[season] = address(1);
+        }
+    }
+
+    function setReceiver(address newReceiver) external {
+        receiver = newReceiver;
+    }
+
+    function ownerWithdraw() external {
+        require(receiver != address(0), "illegal receiver");
+        uint finishTime = START_TIME + SEASON_INTERVAL * SEASON_NUM;
+        require(block.timestamp >= OWNER_WITHDRAW_TIME + finishTime, "illegal time");
+        uint balance = VOTE_TOKEN.balanceOf(address(this));
+        VOTE_TOKEN.safeTransfer(receiver, balance);
+    }
+
+}

@@ -1,0 +1,32 @@
+{
+  "name": "astherus",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@chainlink/contracts": "^1.1.0",
+    "@nomicfoundation/hardhat-ethers": "^3.0.5",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.6",
+    "@openzeppelin/contracts": "^5.0.2",
+    "@openzeppelin/contracts-upgradeable": "^5.0.2",
+    "ethers": "^6.12.0",
+    "hardhat": "^2.22.3",
+    "hardhat-abi-exporter": "^2.10.1",
+    "hardhat-deploy": "^0.12.4",
+    "hardhat-deploy-ethers": "^0.4.2",
+    "hardhat-spdx-license-identifier": "^2.3.1",
+    "merkletreejs": "^0.4.0",
+    "prompt-sync": "^4.2.0",
+    "shelljs": "^0.8.5"
+  },
+  "dependencies": {
+    "hardhat-log-remover": "^2.1.1",
+    "keythereum": "^2.0.0"
+  }
+}
