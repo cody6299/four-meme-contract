@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
-import "hardhat/console.sol";
 
 library LibActivityTime {
 
@@ -13,7 +12,7 @@ library LibActivityTime {
 
     enum ActivityState {
         NOT_BEGIN,
-        ACTIVE,
+        VOTING,
         BILLING,
         ALREADY_FINISH
     }
@@ -27,15 +26,15 @@ library LibActivityTime {
     }
 
     function alreadyFinish(ActivityTimeInfo memory activityTimeInfo) internal view returns (bool) {
-        return block.timestamp > finishTime(activityTimeInfo);
+        return block.timestamp >= finishTime(activityTimeInfo);
     }
 
-    function isActive(ActivityTimeInfo memory activityTimeInfo) internal view returns (bool) {
-        return !notBegin(activityTimeInfo) && !alreadyFinish(activityTimeInfo);
+    function isInProgress(ActivityTimeInfo memory activityTimeInfo) internal view returns (bool) {
+        return !(notBegin(activityTimeInfo) || alreadyFinish(activityTimeInfo));
     }
 
     function season(ActivityTimeInfo memory activityTimeInfo) internal view returns (uint64) {
-        if (!isActive(activityTimeInfo)) {
+        if (!isInProgress(activityTimeInfo)) {
             return 0;
         } else {
             return ((uint64(block.timestamp) - activityTimeInfo.startTime) / activityTimeInfo.seasonInterval) + 1;
@@ -47,11 +46,32 @@ library LibActivityTime {
     }
 
     function seasonFinishTime(ActivityTimeInfo memory activityTimeInfo, uint64 seasonId) internal pure returns (uint64) {
-        return seasonStartTime(activityTimeInfo, seasonId + 1) - 1;
+        return seasonStartTime(activityTimeInfo, seasonId + 1);
+    }
+
+    function isVoting(ActivityTimeInfo memory activityTimeInfo, uint64 seasonId) internal view returns (bool) {
+        return block.timestamp >= seasonStartTime(activityTimeInfo, seasonId) && 
+            block.timestamp < (seasonFinishTime(activityTimeInfo, seasonId) - activityTimeInfo.billingCycle);
+    }
+
+    function isVoting(ActivityTimeInfo memory activityTimeInfo) internal view returns (bool) {
+        if (!isInProgress(activityTimeInfo)) {
+            return false;
+        } else {
+            return isVoting(activityTimeInfo, season(activityTimeInfo));
+        }
     }
 
     function isBilling(ActivityTimeInfo memory activityTimeInfo, uint64 seasonId) internal view returns (bool) {
         return block.timestamp >= (seasonFinishTime(activityTimeInfo, seasonId) - activityTimeInfo.billingCycle);
+    }
+
+    function isBilling(ActivityTimeInfo memory activityTimeInfo) internal view returns (bool) {
+        uint64 seasonId = activityTimeInfo.seasonNum;
+        if (isInProgress(activityTimeInfo)) {
+            seasonId = season(activityTimeInfo);
+        }
+        return isBilling(activityTimeInfo, seasonId);
     }
 
     function state(ActivityTimeInfo memory activityTimeInfo) internal view returns (ActivityState) {
@@ -62,7 +82,7 @@ library LibActivityTime {
         } else if (isBilling(activityTimeInfo, season(activityTimeInfo))) {
             return ActivityState.BILLING;
         } else {
-            return ActivityState.ACTIVE;
+            return ActivityState.VOTING;
         }
     }
 }

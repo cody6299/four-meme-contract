@@ -15,7 +15,7 @@ const contracts = {
 }
 
 let exportContracts = {}
-for (network in contracts) {
+for (let network in contracts) {
     if (network != 'default' && (NETWORKS[network] == null || NETWORKS[network].chainId == null)) {
         throw new Error(`contract config error: network ${network} not exists, config it in networks.js first`);
     }

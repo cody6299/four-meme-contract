@@ -12,7 +12,7 @@ const tokens = {
 }
 
 let exportTokens = {}
-for (network in tokens) {
+for (let network in tokens) {
     if (network != 'default' && (NETWORKS[network] == null || NETWORKS[network].chainId == null)) {
         throw new Error(`token config error: network ${network} not exists, config it in networks.js first`);
     }

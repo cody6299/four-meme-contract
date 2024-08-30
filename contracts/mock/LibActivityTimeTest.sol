@@ -32,8 +32,8 @@ contract LibActivityTimeTest {
         return activityTimeInfo.alreadyFinish();
     }
 
-    function isActive(LibActivityTime.ActivityTimeInfo memory activityTimeInfo) external view returns (bool) {
-        return activityTimeInfo.isActive();
+    function isInProgress(LibActivityTime.ActivityTimeInfo memory activityTimeInfo) external view returns (bool) {
+        return activityTimeInfo.isInProgress();
     }
 
     function season(LibActivityTime.ActivityTimeInfo memory activityTimeInfo) external view returns (uint64) {
@@ -48,8 +48,20 @@ contract LibActivityTimeTest {
         return activityTimeInfo.seasonFinishTime(seasonId);
     }
 
+    function isVoting(LibActivityTime.ActivityTimeInfo memory activityTimeInfo, uint64 seasonId) external view returns (bool) {
+        return activityTimeInfo.isVoting(seasonId);
+    }
+
+    function isVoting(LibActivityTime.ActivityTimeInfo memory activityTimeInfo) external view returns (bool) {
+        return activityTimeInfo.isVoting();
+    }
+
     function isBilling(LibActivityTime.ActivityTimeInfo memory activityTimeInfo, uint64 seasonId) external view returns (bool) {
         return activityTimeInfo.isBilling(seasonId);
+    }
+
+    function isBilling(LibActivityTime.ActivityTimeInfo memory activityTimeInfo) external view returns (bool) {
+        return activityTimeInfo.isBilling();
     }
 
     function state(LibActivityTime.ActivityTimeInfo memory activityTimeInfo) external view returns (LibActivityTime.ActivityState) {

@@ -2,7 +2,7 @@ const factory = {
     default: {
         defaultDecimals: 18,
         createFee: ethers.parseEther('0.2'),
-        spotTokenPercent: ethers.parseUnits('1', 6),
+        spotTokenPercent: ethers.parseUnits('1', 4),
         baseTokenAmount: ethers.parseUnits('1000000', 18),
     },
     bsctest: {

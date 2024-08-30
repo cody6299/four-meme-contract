@@ -34,6 +34,7 @@ contract Factory is Initializable, AccessControlEnumerableUpgradeable, UUPSUpgra
     address public admin;
     address public manager;
     address public keeper;
+    ERC1967Proxy public lastProxy;
 
     function initialize(
         uint8 _defaultDecimals, 
@@ -73,14 +74,20 @@ contract Factory is Initializable, AccessControlEnumerableUpgradeable, UUPSUpgra
 
     function _authorizeUpgrade(address newImplementation) internal onlyRole(ADMIN_ROLE) override {}
 
-    function deployERC20(string memory _name, string memory _symbol, uint256 _totalSupply) external returns (FourMemeERC20) {
+    function deployERC20(string calldata _name, string calldata _symbol, uint256 _totalSupply) external returns (FourMemeERC20) {
         return new FourMemeERC20(_name, _symbol, defaultDecimals, _totalSupply, msg.sender); 
     }
 
-    function deployActivity(LibActivityTime.ActivityTimeInfo calldata _timeInfo) external onlyRole(MANAGER_ROLE) returns (ERC1967Proxy proxy) {
+    function deployActivity(uint64 _startTime, uint64 _seasonNum, uint64 _seasonInterval, uint64 _billingCycle) external onlyRole(MANAGER_ROLE) returns (ERC1967Proxy proxy) {
+        LibActivityTime.ActivityTimeInfo memory timeInfo = LibActivityTime.ActivityTimeInfo({
+            startTime: _startTime,
+            seasonNum: _seasonNum,
+            seasonInterval: _seasonInterval,
+            billingCycle: _billingCycle
+        });
         bytes memory data = abi.encodeWithSelector(
             IActivity.initialize.selector, 
-            _timeInfo, 
+            timeInfo, 
             createFee,
             feeReceiver,
             spotTokenPercent,
@@ -90,6 +97,7 @@ contract Factory is Initializable, AccessControlEnumerableUpgradeable, UUPSUpgra
             keeper
         );
         proxy = new ERC1967Proxy(activityImplementation, data);
+        lastProxy = proxy;
         emit NewActivity(proxy);
     }
 

@@ -17,7 +17,7 @@ const users = {
 }
 
 let exportUsers = {}
-for (network in users) {
+for (let network in users) {
     if (network != 'default' && (NETWORKS[network] == null || NETWORKS[network].chainId == null)) {
         throw new Error(`user config error: network ${network} not exists, config it in networks.js first`);
     }

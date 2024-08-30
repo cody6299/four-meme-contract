@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 
 import "./interfaces/IFactory.sol";
@@ -15,7 +16,7 @@ import "./interfaces/ISwapFactory.sol";
 import "./libraries/LibActivityTime.sol";
 import "./interfaces/IUniswapV2Locker.sol";
 
-contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
+contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerableUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
     using LibActivityTime for LibActivityTime.ActivityTimeInfo;
 
@@ -23,11 +24,12 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
     event UpdateFeeReceiver(address oldAddress, address newAddress);
     event UpdateSpotTokenPercent(uint oldPercent, uint newPercent);
     event UpdateBaseTokenAmount(uint oldAmount, uint newAmount);
-    event AddToken(bytes32 id, string name, string symbol, uint8 decimals, uint totalSupply, uint64 season, uint createTime);
+    event AddToken(bytes32 id, IERC20 token, string name, string symbol, uint8 decimals, uint totalSupply, uint64 season, uint createTime);
     event Vote(address user, address token, uint amount, bool newUser, uint totalVotedAmount, uint totalVoteUserNum, uint voteTime);
     event BillingSkip(uint season);
     event BillingSuccuess(uint64 season, address token, address pair, uint256 liquidity, uint256 billingTime);
     event Withdraw(uint64 season, address user, uint256 amount, uint256 withdrawTime);
+    event AdminDeposit(address user, uint amount);
 
     struct TokenInfo {
         uint season;
@@ -55,13 +57,24 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
     address payable public feeReceiver;
     uint256 public spotTokenPercent;
     uint256 public baseTokenAmount;
+    uint baseTokenAvailable;
 
     IFactory public factory;
     mapping(address => TokenInfo) public tokens;
     mapping(uint64 => address) public bestToken;
-    mapping(uint => mapping(address => mapping(address => uint))) public voteHistory;
+    mapping(address => mapping(address => uint)) public voteHistory;
     mapping(uint => mapping(address => uint)) public voteAmount;
     mapping(uint64 => address) public pairs;
+
+    modifier whenVoting() {
+        require(timeInfo.isVoting(), "not voting");
+        _;
+    }
+
+    modifier whenBilling(uint64 season) {
+        require(timeInfo.isBilling(season), "not billing");
+        _;
+    }
 
     constructor(IERC20 voteToken, IERC20 baseToken, ISwapFactory swapFactory, ISwapRouter swapRouter, bytes32 pairInitCodeHash, IUniswapV2Locker lpLocker) {
         VOTE_TOKEN = voteToken;
@@ -87,13 +100,15 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
         __Pausable_init();
         __AccessControlEnumerable_init();
         __UUPSUpgradeable_init();
-        
+        __ReentrancyGuard_init();
         _grantRole(MANAGER_ROLE, msg.sender);
+        _grantRole(ADMIN_ROLE, msg.sender);
         updateCreateFee(_createFee);
         updateFeeReceiver(_feeReceiver);
         updateSpotTokenPercent(_spotTokenPercent);
         updateBaseTokenAmount(_baseTokenAmount);
         _revokeRole(MANAGER_ROLE, msg.sender);
+        _revokeRole(ADMIN_ROLE, msg.sender);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(ADMIN_ROLE, _admin);
@@ -109,12 +124,13 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
         return (timeInfo, timeInfo.state(), timeInfo.season());
     }
 
-    function addToken(bytes32 id, string calldata name, string calldata symbol, uint totalSupply) external payable whenNotPaused {
-        require(timeInfo.isActive(), "not active");
+    function addToken(bytes32 id, string calldata name, string calldata symbol, uint totalSupply) external payable whenNotPaused whenVoting nonReentrant {
         require(msg.value >= createFee, "illegal fee");
+        uint64 season = timeInfo.season();
+
         Address.sendValue(feeReceiver, createFee);
         IERC20 token = factory.deployERC20(name, symbol, totalSupply);
-        uint64 season = timeInfo.season();
+
         TokenInfo memory tokenInfo = TokenInfo({
             season: season,
             votedAmount: 0,
@@ -129,20 +145,19 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
         if (msg.value > createFee) {
             Address.sendValue(payable(msg.sender), msg.value - createFee);
         }
-        emit AddToken(id, name, symbol, factory.defaultDecimals(), totalSupply, season, block.timestamp);
+        emit AddToken(id, token, name, symbol, factory.defaultDecimals(), totalSupply, season, block.timestamp);
     }
 
-    function vote(address tokenAddress, uint amount) external whenNotPaused {
-        require(timeInfo.isActive(), "not active");
+    function vote(address tokenAddress, uint amount) external whenNotPaused whenVoting nonReentrant {
         uint64 season = timeInfo.season();
-        require(!timeInfo.isBilling(season), "billing");
 
         VOTE_TOKEN.safeTransferFrom(msg.sender, address(this), amount);         
 
         TokenInfo memory tokenInfo = tokens[tokenAddress];
         require(tokenInfo.createTime > 0, "token not exist");
+        require(tokenInfo.season == season, "illegal season");
         tokenInfo.votedAmount += amount;
-        bool newUser = voteHistory[season][msg.sender][tokenAddress] == 0;
+        bool newUser = voteHistory[msg.sender][tokenAddress] == 0;
         if (newUser) {
             tokenInfo.voteUserNum += 1;
         }
@@ -150,7 +165,7 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
             TokenInfo memory bestTokenInfo = tokens[bestToken[season]];
             if (bestTokenInfo.votedAmount < tokenInfo.votedAmount) {
                 bestToken[season] = tokenAddress;
-            } else if (bestTokenInfo.votedAmount == tokenInfo.votedAmount && bestTokenInfo.createTime < tokenInfo.createTime) {
+            } else if (bestTokenInfo.votedAmount == tokenInfo.votedAmount && bestTokenInfo.createTime > tokenInfo.createTime) {
                 bestToken[season] = tokenAddress;
             }
         }
@@ -158,14 +173,13 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
         tokens[tokenAddress].votedAmount = tokenInfo.votedAmount; 
         tokens[tokenAddress].voteUserNum = tokenInfo.voteUserNum;
         tokens[tokenAddress].updateTime = block.timestamp;
-        voteHistory[season][msg.sender][tokenAddress] = voteHistory[season][msg.sender][tokenAddress] + amount;
+        voteHistory[msg.sender][tokenAddress] = voteHistory[msg.sender][tokenAddress] + amount;
         voteAmount[season][msg.sender] += amount; 
 
         emit Vote(msg.sender, tokenAddress, amount, newUser, tokenInfo.votedAmount, tokenInfo.voteUserNum, block.timestamp);
     }
 
-    function billing(uint64 season) external payable onlyRole(KEEPER_ROLE) {
-        require(timeInfo.isBilling(season), "illegal time");
+    function billing(uint64 season) external payable onlyRole(KEEPER_ROLE) whenBilling(season) {
         require(pairs[season] == address(0), "already billing");
         address bestTokenAddress = bestToken[season];
         if (bestTokenAddress == address(0)) {
@@ -173,13 +187,14 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
             return;
         }
 
-        IERC20 spotToken = IERC20(bestToken[season]);
-        uint totalSupply = spotToken.totalSupply();
+        IERC20 memeToken = IERC20(bestToken[season]);
+        uint totalSupply = memeToken.totalSupply();
         uint spotTokenAmount = totalSupply * spotTokenPercent / PERCENT_BASE;
-        spotToken.approve(address(SWAP_ROUTER), spotTokenAmount);
+        require(baseTokenAvailable >= baseTokenAmount, "baseToken not enough");
+        memeToken.approve(address(SWAP_ROUTER), spotTokenAmount);
         BASE_TOKEN.approve(address(SWAP_ROUTER), baseTokenAmount);
         ( , , uint liquidity) = SWAP_ROUTER.addLiquidity(
-            address(spotToken),
+            address(memeToken),
             address(BASE_TOKEN),
             spotTokenAmount,
             baseTokenAmount,
@@ -188,7 +203,8 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
             address(this),
             block.timestamp
         );
-        address token0 = address(spotToken);
+        baseTokenAvailable -= baseTokenAmount;
+        address token0 = address(memeToken);
         address token1 = address(BASE_TOKEN);
         (token0, token1) = token0 < token1 ? (token0, token1) : (token1, token0);
         address pair = address(uint160(uint(keccak256(abi.encodePacked(
@@ -204,13 +220,14 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
         if (msg.value > ethFee) {
             Address.sendValue(payable(msg.sender), msg.value - ethFee);
         }
+        pairs[season] = pair;
         emit BillingSuccuess(season, bestTokenAddress, pair, liquidity, block.timestamp);
     }
 
-    function withdraw() external {
+    function withdraw() external nonReentrant {
         uint totalAmount = 0;
         for (uint64 season = 1; season <= timeInfo.seasonNum; season ++) {
-            if (block.timestamp > timeInfo.seasonFinishTime(season)) {
+            if (block.timestamp >= timeInfo.seasonFinishTime(season)) {
                 uint amount = voteAmount[season][msg.sender]; 
                 emit Withdraw(season, msg.sender, amount, block.timestamp);
                 totalAmount += amount;
@@ -222,13 +239,21 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
         }
     }
 
+    function withdrawAmount(address user) external view returns (uint256 totalAmount) {
+        for (uint64 season = 1; season <= timeInfo.seasonNum; season ++) {
+            if (block.timestamp >= timeInfo.seasonFinishTime(season)) {
+                totalAmount += voteAmount[season][user];
+            }
+        }
+    }
+
     function updateCreateFee(uint newFee) public onlyRole(MANAGER_ROLE) {
         emit UpdateCreateFee(createFee, newFee);
         createFee = newFee;
     }
 
     function updateFeeReceiver(address payable newReceiver) public onlyRole(ADMIN_ROLE) {
-        require(feeReceiver != address(0), "illegal address");
+        require(newReceiver != address(0), "illegal address");
         emit UpdateFeeReceiver(feeReceiver, newReceiver);
         feeReceiver = newReceiver;
     }
@@ -245,14 +270,20 @@ contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerable
         baseTokenAmount = newAmount;
     }
 
-    function ownerWithdraw(IERC20 token, uint amount) external onlyRole(MANAGER_ROLE) {
+    function adminWithdraw(IERC20 token, uint amount) external onlyRole(MANAGER_ROLE) {
         require(feeReceiver != address(0), "illegal receiver");
         require(block.timestamp >= timeInfo.finishTime() + OWNER_WITHDRAW_TIME, "illegal time");
         uint balance = VOTE_TOKEN.balanceOf(address(this));
         if (amount > balance) {
             amount = balance;
         }
-        token.safeTransfer(feeReceiver, balance);
+        token.safeTransfer(feeReceiver, amount);
+    }
+
+    function adminDeposit(uint amount) external {
+        BASE_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+        baseTokenAvailable += amount;
+        emit AdminDeposit(msg.sender, amount);
     }
 
     function pause() external onlyRole(MANAGER_ROLE) {

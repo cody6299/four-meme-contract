@@ -1,16 +1,5 @@
 const chai = require("chai");
 const expect = chai.expect;
-const {ASTHERUS} = require('../config/business/astherus.js');
-const { MerkleTree } = require('merkletreejs')
-
-
-const PROPOSER_ROLE = ethers.id('PROPOSER_ROLE');
-const EXECUTOR_ROLE = ethers.id('EXECUTOR_ROLE');
-const CANCELLER_ROLE = ethers.id('CANCELLER_ROLE');
-const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
-
-const KEEPER_ROLE = ethers.id('KEEPER_ROLE');
-const NATIVE = '0xfdae1ba7c826abdc4c99903c8056f82a1a04a615';
 
 describe("Activity.Time", () => {
     before(async function () {
@@ -67,22 +56,22 @@ describe("Activity.Time", () => {
         expect(await this.LibActivityTimeTest.alreadyFinish(timeInfo)).to.be.equal(true);
     });
 
-    it("isActive", async function() {
+    it("isInProgress", async function() {
         const timeInfo = {
             startTime: (await ethers.provider.getBlock()).timestamp + 24 * 60 * 60,
             seasonNum: 12,
             seasonInterval: 24 * 60 * 60,
             billingCycle: 60 * 60,
         }
-        expect(await this.LibActivityTimeTest.isActive(timeInfo)).to.be.equal(false);
+        expect(await this.LibActivityTimeTest.isInProgress(timeInfo)).to.be.equal(false);
         await network.provider.send("evm_mine", [Number(await this.LibActivityTimeTest.startTime(timeInfo)) + 10]);
-        expect(await this.LibActivityTimeTest.isActive(timeInfo)).to.be.equal(true);
+        expect(await this.LibActivityTimeTest.isInProgress(timeInfo)).to.be.equal(true);
         await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 100]);
-        expect(await this.LibActivityTimeTest.isActive(timeInfo)).to.be.equal(true);
+        expect(await this.LibActivityTimeTest.isInProgress(timeInfo)).to.be.equal(true);
         await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 24 * 60 * 60 + 100]);
-        expect(await this.LibActivityTimeTest.isActive(timeInfo)).to.be.equal(true);
+        expect(await this.LibActivityTimeTest.isInProgress(timeInfo)).to.be.equal(true);
         await network.provider.send("evm_mine", [Number(await this.LibActivityTimeTest.finishTime(timeInfo)) + 10]);
-        expect(await this.LibActivityTimeTest.isActive(timeInfo)).to.be.equal(false);
+        expect(await this.LibActivityTimeTest.isInProgress(timeInfo)).to.be.equal(false);
     });
 
     it("season", async function() {
@@ -110,7 +99,35 @@ describe("Activity.Time", () => {
         }
         for (let i = 0; i < 12; i ++) {
             expect(await this.LibActivityTimeTest.seasonStartTime(timeInfo, i + 1)).to.be.equal(timeInfo.startTime + i * timeInfo.seasonInterval);
-            expect(await this.LibActivityTimeTest.seasonFinishTime(timeInfo, i + 1)).to.be.equal(timeInfo.startTime + (i + 1) * timeInfo.seasonInterval - 1);
+            expect(await this.LibActivityTimeTest.seasonFinishTime(timeInfo, i + 1)).to.be.equal(timeInfo.startTime + (i + 1) * timeInfo.seasonInterval);
+        }
+    });
+    it("isVoting", async function() {
+        const timeInfo = {
+            startTime: (await ethers.provider.getBlock()).timestamp + 24 * 60 * 60,
+            seasonNum: 12,
+            seasonInterval: 24 * 60 * 60,
+            billingCycle: 60 * 60,
+        }
+        expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64),uint64)'](timeInfo, 1)).to.be.equal(false);
+        expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(false);
+        await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 24 * 60 * 60]);
+        for (let i = 0; i < 12; i ++) {
+            expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(true);
+            expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(true);
+            await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 23 * 60 * 60]);
+            expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(false);
+            expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(false);
+            await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 1 * 60 * 60 - 1]);
+            expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(false);
+            expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(false);
+            await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 1]);
+            expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(false);
+            if (i + 1 == 12) {
+                expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(false);
+            } else {
+                expect(await this.LibActivityTimeTest['isVoting((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(true);
+            }
         }
     });
 
@@ -121,16 +138,25 @@ describe("Activity.Time", () => {
             seasonInterval: 24 * 60 * 60,
             billingCycle: 60 * 60,
         }
-        expect(await this.LibActivityTimeTest.isBilling(timeInfo, 1)).to.be.equal(false);
+        expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64),uint64)'](timeInfo, 1)).to.be.equal(false);
+        expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(false);
         await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 24 * 60 * 60]);
         for (let i = 0; i < 12; i ++) {
-            expect(await this.LibActivityTimeTest.isBilling(timeInfo, i + 1)).to.be.equal(false);
+            expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(false);
+            expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(false);
             await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 23 * 60 * 60]);
-            expect(await this.LibActivityTimeTest.isBilling(timeInfo, i + 1)).to.be.equal(true);
+            expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(true);
+            expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(true);
             await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 1 * 60 * 60 - 1]);
-            expect(await this.LibActivityTimeTest.isBilling(timeInfo, i + 1)).to.be.equal(true);
+            expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(true);
+            expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(true);
             await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 1]);
-            expect(await this.LibActivityTimeTest.isBilling(timeInfo, i + 1)).to.be.equal(true);
+            expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64),uint64)'](timeInfo, i + 1)).to.be.equal(true);
+            if (i + 1 == 12) {
+                expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(true);
+            } else {
+                expect(await this.LibActivityTimeTest['isBilling((uint64,uint64,uint64,uint64))'](timeInfo)).to.be.equal(false);
+            }
         }
     });
 
@@ -141,13 +167,13 @@ describe("Activity.Time", () => {
             seasonInterval: 24 * 60 * 60,
             billingCycle: 60 * 60,
         }
-        const STATE = {NOT_BEGIN:0,ACTIVE:1,BILLING:2,ALREADY_FINISH:3};
+        const STATE = {NOT_BEGIN:0,VOTING:1,BILLING:2,ALREADY_FINISH:3};
         expect(await this.LibActivityTimeTest.state(timeInfo)).to.be.equal(STATE.NOT_BEGIN);
         await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 24 * 60 * 60 - 1]);
         expect(await this.LibActivityTimeTest.state(timeInfo)).to.be.equal(STATE.NOT_BEGIN);
         await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 1]);
         for (let i = 0; i < 12; i ++) {
-            expect(await this.LibActivityTimeTest.state(timeInfo)).to.be.equal(STATE.ACTIVE);
+            expect(await this.LibActivityTimeTest.state(timeInfo)).to.be.equal(STATE.VOTING);
             await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 23 * 60 * 60]);
             expect(await this.LibActivityTimeTest.state(timeInfo)).to.be.equal(STATE.BILLING);
             await network.provider.send("evm_mine", [(await ethers.provider.getBlock()).timestamp + 60 * 60 - 1]);
