@@ -23,6 +23,7 @@ contract Factory is Initializable, AccessControlEnumerableUpgradeable, UUPSUpgra
     event UpdateAdmin(address oldAdmin, address newAdmin);
     event UpdateManager(address oldManager, address newManager);
     event UpdateKeeper(address oldKeeper, address newKeeper);
+    event NewActivity(ERC1967Proxy proxy);
 
     uint8 public defaultDecimals;
     address public activityImplementation;
@@ -76,7 +77,7 @@ contract Factory is Initializable, AccessControlEnumerableUpgradeable, UUPSUpgra
         return new FourMemeERC20(_name, _symbol, defaultDecimals, _totalSupply, msg.sender); 
     }
 
-    function deployActivity(LibActivityTime.ActivityTimeInfo calldata _timeInfo) external onlyRole(MANAGER_ROLE) returns (ERC1967Proxy) {
+    function deployActivity(LibActivityTime.ActivityTimeInfo calldata _timeInfo) external onlyRole(MANAGER_ROLE) returns (ERC1967Proxy proxy) {
         bytes memory data = abi.encodeWithSelector(
             IActivity.initialize.selector, 
             _timeInfo, 
@@ -88,20 +89,10 @@ contract Factory is Initializable, AccessControlEnumerableUpgradeable, UUPSUpgra
             manager,
             keeper
         );
-        return new ERC1967Proxy(activityImplementation, data);
+        proxy = new ERC1967Proxy(activityImplementation, data);
+        emit NewActivity(proxy);
     }
-    /*
-    function initialize(
-        LibActivityTime.ActivityTimeInfo calldata _timeInfo, 
-        uint _createFee,
-        address payable _feeReceiver,
-        uint _spotTokenPercent,
-        uint _baseTokenAmount,
-        address _admin, 
-        address _manager, 
-        address _keeper
-    ) initializer external {
-    */
+
     function updateDefaultDecimals(uint8 _defaultDecimals) public onlyRole(MANAGER_ROLE) {
         emit UpdateDefaultDecimals(defaultDecimals, _defaultDecimals); 
         defaultDecimals = _defaultDecimals;

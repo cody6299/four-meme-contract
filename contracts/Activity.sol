@@ -15,7 +15,7 @@ import "./interfaces/ISwapFactory.sol";
 import "./libraries/LibActivityTime.sol";
 import "./interfaces/IUniswapV2Locker.sol";
 
-contract Active is Initializable, PausableUpgradeable, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
+contract Activity is Initializable, PausableUpgradeable, AccessControlEnumerableUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
     using LibActivityTime for LibActivityTime.ActivityTimeInfo;
 
@@ -42,7 +42,7 @@ contract Active is Initializable, PausableUpgradeable, AccessControlEnumerableUp
     bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
     uint256 public constant PERCENT_BASE = 10000;
     uint256 public constant OWNER_WITHDRAW_TIME = 1 days;
-    IFactory public immutable FACTORY;
+    uint256 public constant LOCK_PERIOD = 10 * 365 * 24 * 60 * 60;
     IERC20 public immutable VOTE_TOKEN;
     IERC20 public immutable BASE_TOKEN;
     ISwapFactory public immutable SWAP_FACTORY;
@@ -56,14 +56,14 @@ contract Active is Initializable, PausableUpgradeable, AccessControlEnumerableUp
     uint256 public spotTokenPercent;
     uint256 public baseTokenAmount;
 
+    IFactory public factory;
     mapping(address => TokenInfo) public tokens;
     mapping(uint64 => address) public bestToken;
     mapping(uint => mapping(address => mapping(address => uint))) public voteHistory;
     mapping(uint => mapping(address => uint)) public voteAmount;
     mapping(uint64 => address) public pairs;
 
-    constructor(IFactory factory, IERC20 voteToken, IERC20 baseToken, ISwapFactory swapFactory, ISwapRouter swapRouter, bytes32 pairInitCodeHash, IUniswapV2Locker lpLocker) {
-        FACTORY = factory;
+    constructor(IERC20 voteToken, IERC20 baseToken, ISwapFactory swapFactory, ISwapRouter swapRouter, bytes32 pairInitCodeHash, IUniswapV2Locker lpLocker) {
         VOTE_TOKEN = voteToken;
         BASE_TOKEN = baseToken;
         SWAP_FACTORY = swapFactory;
@@ -83,6 +83,7 @@ contract Active is Initializable, PausableUpgradeable, AccessControlEnumerableUp
         address _manager, 
         address _keeper
     ) initializer external {
+        factory = IFactory(msg.sender);
         __Pausable_init();
         __AccessControlEnumerable_init();
         __UUPSUpgradeable_init();
@@ -112,7 +113,7 @@ contract Active is Initializable, PausableUpgradeable, AccessControlEnumerableUp
         require(timeInfo.isActive(), "not active");
         require(msg.value >= createFee, "illegal fee");
         Address.sendValue(feeReceiver, createFee);
-        IERC20 token = FACTORY.deployERC20(name, symbol, totalSupply);
+        IERC20 token = factory.deployERC20(name, symbol, totalSupply);
         uint64 season = timeInfo.season();
         TokenInfo memory tokenInfo = TokenInfo({
             season: season,
@@ -128,7 +129,7 @@ contract Active is Initializable, PausableUpgradeable, AccessControlEnumerableUp
         if (msg.value > createFee) {
             Address.sendValue(payable(msg.sender), msg.value - createFee);
         }
-        emit AddToken(id, name, symbol, FACTORY.defaultDecimals(), totalSupply, season, block.timestamp);
+        emit AddToken(id, name, symbol, factory.defaultDecimals(), totalSupply, season, block.timestamp);
     }
 
     function vote(address tokenAddress, uint amount) external whenNotPaused {
@@ -199,7 +200,7 @@ contract Active is Initializable, PausableUpgradeable, AccessControlEnumerableUp
         (uint ethFee, , , , , , , , ) = LP_LOCKER.gFees();
         require(msg.value >= ethFee, "no fee");
         IERC20(pair).approve(address(LP_LOCKER), liquidity);
-        LP_LOCKER.lockLPToken{value: ethFee}(pair, liquidity, type(uint256).max, payable(address(0)), true, feeReceiver);
+        LP_LOCKER.lockLPToken{value: ethFee}(pair, liquidity, LOCK_PERIOD, payable(address(0)), true, feeReceiver);
         if (msg.value > ethFee) {
             Address.sendValue(payable(msg.sender), msg.value - ethFee);
         }

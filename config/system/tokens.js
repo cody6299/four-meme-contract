@@ -2,18 +2,12 @@ const {NETWORKS} = require('./networks.js');
 
 const tokens = {
     default: {
+        VoteToken: 'MockWHY',
+        BaseToken: 'MockWHY',
     },
     bscmain: {
     },
     bsctest: {
-    },
-    ethmain: {
-    },
-    ethtest: {
-    },
-    scrollmain: {
-    },
-    scrolltest: {
     },
 }
 
